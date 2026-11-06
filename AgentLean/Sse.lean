@@ -64,6 +64,7 @@ def feedByte (d : Decoder) (b : UInt8) : Decoder :=
   else if b == 13 then { processLine d with lastCR := true }
   else { d with line := d.line.push b, lastCR := false }
 
+-- @tg: implements:: [[openspec:llm-codecs#Streaming decoding]]
 /-- Feed a chunk of bytes. -/
 def feed (d : Decoder) (chunk : ByteArray) : Decoder := chunk.data.foldl feedByte d
 

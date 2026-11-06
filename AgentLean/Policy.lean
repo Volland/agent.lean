@@ -74,6 +74,7 @@ def countAux (pf pg : List Obs → Bool) : List Obs → Nat
   | [] => 0
   | o :: r => if pg (o :: r) then 0 else (if pf (o :: r) then 1 else 0) + countAux pf pg r
 
+-- @tg: implements:: [[openspec:policies#Temporal trace policies]]
 /-- The value of a formula over a trace given newest first. -/
 def eval : Formula → List Obs → Bool
   | tt, _ => true
@@ -115,6 +116,7 @@ def userTurn : Formula := atom "user turn" fun | .user _ => true | _ => false
 /-- The newest observation is a result labelled untrusted. -/
 def untrustedResult : Formula := atom "untrusted result" fun | .result _ u => u | _ => false
 
+-- @tg: implements:: [[openspec:policies#Taint-based information flow]]
 /-- Untrusted data has entered the context since the last user turn. -/
 def tainted : Formula := since (not userTurn) untrustedResult
 
@@ -138,10 +140,12 @@ def requiresBefore (name before : String) : Formula :=
 def atMostPerTurn (name : String) (n : Nat) : Formula :=
   implies (isCall name) (countSince (isCall name) userTurn n)
 
+-- @tg: implements:: [[openspec:policies#Taint-based information flow]]
 /-- After untrusted data, `name` needs a `confirm` call that came after the untrusted data. -/
 def confirmAfterUntrusted (name confirm : String) : Formula :=
   implies (isCall name) (not (prev (since (not (isCall confirm)) untrustedResult)))
 
+-- @tg: implements:: [[openspec:policies#Per-call guards]]
 /-- Every call to `name` must satisfy the argument guard `p`. -/
 def guard (name : String) (label : String) (p : Json → Bool) : Formula :=
   implies (isCall name) (callWhere name label p)
@@ -203,6 +207,7 @@ partial def fromJson? : Json → Except String Mon
 
 end Mon
 
+-- @tg: implements:: [[openspec:policies#Monitor soundness]]
 /-- One monitor step: the new state after observing `o`, given the previous state (none at the start). -/
 def mstep : Formula → Option Mon → Obs → Mon
   | .tt, _, _ => .leaf true
@@ -314,6 +319,8 @@ theorem runMon_eq_specOpt (f : Formula) (tr : List Obs) : runMon f tr = specOpt 
   | nil => rfl
   | cons o r ih => rw [runMon, ih, mstep_spec]; rfl
 
+-- @tg: implements:: [[adr:0009]]
+-- @tg: implements:: [[openspec:policies#Monitor soundness]]
 /-- **Monitor soundness**: checking a candidate observation `o` with the monitor state of the trace
 so far gives exactly the formula's value over the whole trace including `o`. -/
 theorem monitor_sound (f : Formula) (o : Obs) (tr : List Obs) :

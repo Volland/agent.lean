@@ -1,11 +1,13 @@
 ---
 type: Decision
-specs: ["adr:0002", "adr:0003", "adr:0004", "adr:0005", "adr:0006", "adr:0007", "adr:0008", "adr:0009", "adr:0010", "adr:0011", "adr:0012"]
+specs: ["adr:0002", "adr:0003", "adr:0004", "adr:0005", "adr:0006", "adr:0007", "adr:0008", "adr:0009", "adr:0010", "adr:0011", "adr:0012", "adr:0013", "adr:0014", "adr:0015", "adr:0016", "adr:0017"]
 openspec: [agent-core, tools, policies, llm-codecs, trace-replay, host-abi, portable-build]
 ---
 # Decisions
 
-The design choices of agent.lean, one section per ADR in `docs/adr/`, with the constraints and concepts that motivate them as typed edges. The ADR holds the alternatives; this file holds the relations.
+The design choices of agent.lean, one section per ADR in `docs/adr/`, with what motivates each as typed edges. The ADR holds the alternatives; this file holds the relations.
+
+ADRs 0002–0012 come from the design session, 0013–0017 from the implementation.
 
 ## Pure step machine core
 
@@ -93,3 +95,47 @@ Model requests name credentials by reference and secrets cannot be serialized; s
 The project is Apache-2.0, named agent.lean, with Lake package `agentLean`, namespace `AgentLean` and C prefix `agent_`. ADR 0012.
 
 - motivated_by:: [[constraints#GMP is LGPL]] {weight: secondary}
+
+## Feasibility spike passed
+
+The week-one spike cross-compiled a hello-agent to macOS, Mac Catalyst, iOS, Android and Linux on four architectures (0.5–1.2 MB static), so the design stands. Recorded with ADR 0008.
+
+- motivated_by:: [[constraints#No prebuilt Lean libraries for mobile and embedded]] {weight: primary}
+- motivated_by:: [[decisions#Generated C plus minimal runtime]] {weight: primary}
+
+## Runtime without libuv
+
+The bundled runtime drops libuv, OpenSSL, GMP and mimalloc; a POSIX shim stands in for the few libuv calls `io.cpp` makes, and runtime patches must apply exactly. ADR 0013.
+
+- motivated_by:: [[constraints#The Lean runtime core calls libuv]] {weight: primary}
+- motivated_by:: [[constraints#GMP is LGPL]] {weight: secondary}
+- motivated_by:: [[constraints#iOS has no system call]] {weight: secondary}
+- motivated_by:: [[decisions#Runtime dependency budget]] {weight: secondary}
+
+## Flat frames for agent-as-tool
+
+Child agents run as frames in one flat array with `f<k>/` id prefixes; budgets are reserved at spawn and returned at the end. ADR 0014.
+
+- motivated_by:: [[architecture#Frame]] {weight: primary}
+- motivated_by:: [[decisions#Event-sourced trace]] {weight: secondary}
+
+## Golden traces as the conformance contract
+
+Line-based golden traces (config, events, expected effects) are replayed through every ABI and binding and must match byte for byte. ADR 0015.
+
+- motivated_by:: [[architecture#Golden trace]] {weight: primary}
+- motivated_by:: [[decisions#Event-sourced trace]] {weight: secondary}
+
+## Driver loads libcurl at run time
+
+The Lean driver resolves libcurl with `dlopen` at first use, so no curl headers or link flags are needed anywhere. ADR 0016.
+
+- motivated_by:: [[constraints#Lean's bundled linker cannot read current macOS SDK stubs]] {weight: primary}
+- motivated_by:: [[constraints#Lean has no HTTP or TLS client]] {weight: secondary}
+
+## Registered agents are persistent
+
+The C shim reads the registered agents once, marks them persistent and passes them to every new handle, so concurrent handles share nothing mutable. ADR 0017.
+
+- motivated_by:: [[constraints#Lean reference counts are not atomic by default]] {weight: primary}
+- motivated_by:: [[decisions#Pull-based C ABI]] {weight: secondary}

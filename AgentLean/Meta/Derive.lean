@@ -73,6 +73,7 @@ meta def mkFromJson (decl : Name) : CommandElabM Bool := do
     return true
   return false
 
+-- @tg: implements:: [[openspec:tools#Schema derived from tool type]]
 meta def mkToolSchema (decl : Name) : CommandElabM Bool := do
   let T := mkIdent decl
   if let some fs ← fieldsOf decl then

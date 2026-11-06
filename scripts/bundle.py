@@ -12,6 +12,7 @@ The bundle is plain C/C++ that builds with CMake and a stock compiler, with no L
 The closure doubles as the runtime import allowlist check: a runtime import of `Lean`, `Lake` or a
 `Std` module outside `bundle/std-allowlist.txt` fails with the import chain.
 """
+# @tg: implements:: [[adr:0008]]
 # @tg: implements:: [[openspec:portable-build#Source bundle]]
 # @tg: implements:: [[openspec:portable-build#Runtime import allowlist]]
 from __future__ import annotations
@@ -38,6 +39,7 @@ RUNTIME_CPP = [
     "hash.cpp", "byteslice.cpp", "platform.cpp", "alloc.cpp", "allocprof.cpp", "sharecommon.cpp",
     "stack_overflow.cpp", "process.cpp", "object_ref.cpp", "mpn.cpp", "mutex.cpp",
 ]
+# @tg: implements:: [[adr:0013]]
 # Exact source patches applied to the pinned runtime; each must match or the bundle fails, so a
 # toolchain bump cannot silently drop one.
 RUNTIME_PATCHES = [

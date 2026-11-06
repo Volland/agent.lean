@@ -109,6 +109,7 @@ structure Run where
 
 /-! ## Budgets -/
 
+-- @tg: implements:: [[openspec:agent-core#Agent as tool]]
 /-- What a child agent may use: its own budget, capped by the parent's remaining budget. -/
 def allocate (parent : Budget) (used reserved : Usage) (child : Budget) : Usage :=
   { toolCalls := min child.toolCalls (parent.toolCalls - used.toolCalls - reserved.toolCalls),
@@ -133,6 +134,7 @@ def Frame.new (ag : Agent) (budget : Budget) (parent : Option Nat) (parentCall :
     used := Usage.zero, reserved := Usage.zero, budget, mons := ag.policies.map fun _ => none,
     parent, parentCall, answer := "", reason := "" }
 
+-- @tg: implements:: [[openspec:tools#Static tool registry]]
 def Run.init (env : Env) (cfg : RunConfig) : Except String Run := do
   let some ag := env.find? cfg.agent | throw s!"unknown agent '{cfg.agent}'"
   let declared := ag.tools.filterMap fun t => match t.executor with | .host h => some h | _ => none
@@ -212,6 +214,7 @@ partial def finish (env : Env) (k : Nat) (reason answer detail : String) : StepM
         ("detail", some (.str detail))]).render
     deliver env p fr.parentCall content (reason == "final") false true
 
+-- @tg: implements:: [[openspec:agent-core#Parallel tool calls]]
 /-- Record the result of call `callId` in frame `k` and continue when all results are in. -/
 partial def deliver (env : Env) (k : Nat) (callId content : String) (ok untrusted cont : Bool) : StepM Unit := do
   let fr ← frame k
@@ -249,6 +252,8 @@ partial def request (env : Env) (k : Nat) : StepM Unit := do
     setFrame k { fr with phase := .model, awaiting := id, sse := {}, acc := {} }
     emit (.llmRequest id req.url cfg.credential' req.auth req.headers req.body cfg.stream')
 
+-- @tg: implements:: [[adr:0014]]
+-- @tg: implements:: [[openspec:agent-core#Agent as tool]]
 /-- Start agent `childName` as the tool call `c` of frame `k`. -/
 partial def spawn (env : Env) (k : Nat) (c : CallReq) (childName : String) (args : Json) : StepM Unit := do
   let some cag := env.find? childName
@@ -265,6 +270,9 @@ partial def spawn (env : Env) (k : Nat) (c : CallReq) (childName : String) (args
   observe env ck (.user task)
   request env ck
 
+-- @tg: implements:: [[openspec:tools#Typed tool arguments]]
+-- @tg: implements:: [[openspec:policies#Recoverable violations]]
+-- @tg: implements:: [[openspec:policies#Halting violations]]
 /-- Handle one tool call requested by the model in frame `k`. -/
 partial def handleCall (env : Env) (k : Nat) (ag : Agent) (c : CallReq) : StepM Unit := do
   let fail := fun (f : ToolFailure) => deliver env k c.id f.toJson.render false false false
@@ -329,6 +337,7 @@ partial def onReply (env : Env) (k : Nat) (reply : Reply) : StepM Unit := do
     handleCall env k ag c
   if (← frame k).phase == .tools then continueIfReady env k
 
+-- @tg: implements:: [[openspec:tools#Idempotency declaration]]
 /-- After a crash: re-issue what can be re-issued, fail what must not be repeated. -/
 partial def resumeFrame (env : Env) (k : Nat) : StepM Unit := do
   let fr ← frame k
@@ -353,6 +362,7 @@ partial def resumeFrame (env : Env) (k : Nat) : StepM Unit := do
 
 end
 
+-- @tg: implements:: [[openspec:agent-core#UI events]]
 /-- Feed stream bytes to frame `k`'s decoder; emit text deltas. -/
 def onChunk (r : Run) (k : Nat) (data : ByteArray) : StepM Unit := do
   let fr ← frame k
@@ -364,6 +374,8 @@ def onChunk (r : Run) (k : Nat) (data : ByteArray) : StepM Unit := do
     for d in ds do emit (.ui (.textDelta d))
   setFrame k { fr with sse, acc }
 
+-- @tg: implements:: [[openspec:agent-core#ReAct loop]]
+-- @tg: implements:: [[openspec:llm-codecs#Malformed model output]]
 /-- Handle one accepted event (the run is not done and the step budget is not exhausted). -/
 def handle (env : Env) (e : Event) : StepM Unit := do
   let r ← getRun
@@ -424,6 +436,9 @@ def accepts (r : Run) (e : Event) : Bool :=
     | none => false
   | .cancel | .resume => true
 
+-- @tg: implements:: [[adr:0002]]
+-- @tg: implements:: [[openspec:agent-core#Pure step function]]
+-- @tg: implements:: [[openspec:agent-core#Run budgets]]
 /-- One step. A finished run ignores events; past the step budget the run ends without acting. -/
 def step (env : Env) (r : Run) (e : Event) : Run × Array Effect :=
   if r.done then (r, #[])

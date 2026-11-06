@@ -48,6 +48,14 @@ An automaton compiled from a policy formula over the trace, whose state lives in
 
 The program that embeds the library: it drives the step machine through the C ABI or the Lean driver, performs effects and stores traces. Capability `host-abi`.
 
+## Frame
+
+One agent's part of a run: its history, pending calls, monitors and budget. Frame 0 is the root; a child agent started as a tool is a further frame whose effect ids carry the prefix `f<k>/`.
+
+## Golden trace
+
+A recorded run as lines `C <config>`, `E <event>`, `X <expected effect>` in `traces/`. Every target and binding replays them and must produce the same effects byte for byte.
+
 ## Source bundle
 
 The self-contained tree of generated C, the needed Init/Std modules, the pinned runtime and the ABI shim that builds with stock toolchains. Capability `portable-build`.

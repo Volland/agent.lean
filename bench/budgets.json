@@ -1,0 +1,30 @@
+{
+  "perf_margin": 1.0,
+  "size_margin": 0.05,
+  "targets": {
+    "darwin-arm64": {
+      "perf": {
+        "codec_mb_s": 80.1,
+        "cold_start_us": 485.0,
+        "memory_kb_per_agent": 7.1,
+        "step_overhead_us": 38.7
+      },
+      "size_bytes": 968136
+    },
+    "linux-aarch64": {
+      "perf": {
+        "codec_mb_s": 61.9,
+        "cold_start_us": 934.9,
+        "memory_kb_per_agent": 7.3,
+        "step_overhead_us": 54.88
+      },
+      "size_bytes": 1706632
+    },
+    "linux-riscv64": {
+      "size_bytes": 1305392
+    },
+    "linux-x86_64": {
+      "size_bytes": 1657568
+    }
+  }
+}

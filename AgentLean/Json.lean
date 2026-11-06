@@ -130,8 +130,17 @@ def mkObj (fields : List (String × Option Json)) : Json :=
 def hexDigit (n : Nat) : Char :=
   if n < 10 then Char.ofNat (48 + n) else Char.ofNat (87 + n)
 
-/-- Escape a string's content (without quotes). Control characters become `\u00XX`. -/
-def escape (s : String) : String :=
+def needsEscape (b : UInt8) : Bool := b < 0x20 || b == 34 || b == 92
+
+/-- Escape a string's content (without quotes). Control characters become `\u00XX`. Works on
+bytes and copies unescaped runs whole. -/
+def firstEscape? (s : String) : Option Nat := Id.run do
+  for i in [0:s.utf8ByteSize] do
+    if h : (⟨i⟩ : String.Pos.Raw) < s.rawEndPos then
+      if needsEscape (s.getUTF8Byte ⟨i⟩ h) then return some i
+  return none
+
+def escapeChars (s : String) : String :=
   s.foldl (init := "") fun acc c =>
     match c with
     | '"' => acc ++ "\\\""
@@ -144,9 +153,18 @@ def escape (s : String) : String :=
         acc ++ "\\u00" ++ (hexDigit (c.toNat / 16)).toString ++ (hexDigit (c.toNat % 16)).toString
       else acc.push c
 
+/-- Escape a string's content (without quotes). Strings without characters to escape are returned
+as they are, without allocating. -/
+def escape (s : String) : String :=
+  match firstEscape? s with
+  | none => s
+  | some _ => escapeChars s
+
 def quote (s : String) : String := "\"" ++ escape s ++ "\""
 
-/-- Compact, deterministic rendering. -/
+-- @tg: implements:: [[adr:0005]]
+-- @tg: implements:: [[openspec:portable-build#Cross-platform conformance]]
+/-- Compact, deterministic rendering: the same bytes on every target. -/
 partial def render : Json → String
   | null => "null"
   | bool true => "true"
@@ -163,50 +181,6 @@ instance : ToString Json := ⟨render⟩
 /-- Maximum nesting depth accepted by the parser. -/
 def maxDepth : Nat := 128
 
-abbrev P := StateT Nat (Except String)
-
-structure Src where
-  bytes : ByteArray
-
-def peek (s : Src) : P (Option UInt8) := do
-  let i ← get
-  return if i < s.bytes.size then some s.bytes[i]! else none
-
-def advance (n : Nat := 1) : P Unit := modify (· + n)
-
-def err {α} (msg : String) : P α := do
-  throw s!"json: {msg} at byte {← get}"
-
-def isWs (b : UInt8) : Bool := b == 32 || b == 9 || b == 10 || b == 13
-
-partial def skipWs (s : Src) : P Unit := do
-  match ← peek s with
-  | some b => if isWs b then advance; skipWs s else pure ()
-  | none => pure ()
-
-def expectLit (s : Src) (lit : String) : P Unit := do
-  for b in lit.toUTF8 do
-    match ← peek s with
-    | some c => if c == b then advance else err s!"expected {lit}"
-    | none => err s!"expected {lit}"
-
-def hexVal (b : UInt8) : Option Nat :=
-  if 48 ≤ b && b ≤ 57 then some (b.toNat - 48)
-  else if 97 ≤ b && b ≤ 102 then some (b.toNat - 87)
-  else if 65 ≤ b && b ≤ 70 then some (b.toNat - 55)
-  else none
-
-def hex4 (s : Src) : P Nat := do
-  let mut v := 0
-  for _ in [0:4] do
-    match ← peek s with
-    | some b =>
-      match hexVal b with
-      | some d => v := v * 16 + d; advance
-      | none => err "bad \\u escape"
-    | none => err "bad \\u escape"
-  return v
-
 /-- Append the UTF-8 encoding of a code point. -/
 def pushUtf8 (out : ByteArray) (cp : Nat) : ByteArray :=
   if cp < 0x80 then out.push cp.toUInt8
@@ -218,133 +192,163 @@ def pushUtf8 (out : ByteArray) (cp : Nat) : ByteArray :=
     (((out.push (0xF0 + cp / 262144).toUInt8).push (0x80 + (cp / 4096) % 64).toUInt8).push
       (0x80 + (cp / 64) % 64).toUInt8).push (0x80 + cp % 64).toUInt8
 
-partial def strBody (s : Src) (acc : ByteArray) : P ByteArray := do
-  match ← peek s with
-  | none => err "unterminated string"
-  | some 34 => advance; return acc
-  | some 92 =>
-    advance
-    match ← peek s with
-    | some 34 => advance; strBody s (acc.push 34)
-    | some 92 => advance; strBody s (acc.push 92)
-    | some 47 => advance; strBody s (acc.push 47)
-    | some 98 => advance; strBody s (acc.push 8)
-    | some 102 => advance; strBody s (acc.push 12)
-    | some 110 => advance; strBody s (acc.push 10)
-    | some 114 => advance; strBody s (acc.push 13)
-    | some 116 => advance; strBody s (acc.push 9)
-    | some 117 =>
-      advance
-      let hi ← hex4 s
-      if 0xD800 ≤ hi && hi < 0xDC00 then
-        expectLit s "\\u"
-        let lo ← hex4 s
-        if 0xDC00 ≤ lo && lo < 0xE000 then
-          strBody s (pushUtf8 acc (0x10000 + (hi - 0xD800) * 1024 + (lo - 0xDC00)))
-        else err "invalid surrogate pair"
-      else if 0xDC00 ≤ hi && hi < 0xE000 then err "lone low surrogate"
-      else strBody s (pushUtf8 acc hi)
-    | _ => err "bad escape"
-  | some b =>
-    if b < 32 then err "control character in string" else
-    advance; strBody s (acc.push b)
+namespace Parse
 
-def parseStr (s : Src) : P String := do
-  advance -- opening quote
-  let bytes ← strBody s ByteArray.empty
-  match String.fromUTF8? bytes with
-  | some t => return t
-  | none => err "invalid UTF-8 in string"
+abbrev R (α : Type) := Except String (α × Nat)
 
-def isDigit (b : UInt8) : Bool := 48 ≤ b && b ≤ 57
+def err {α} (msg : String) (i : Nat) : R α := .error s!"json: {msg} at byte {i}"
 
-partial def digits (s : Src) (acc : Nat) (count : Nat) : P (Nat × Nat) := do
-  match ← peek s with
-  | some b => if isDigit b then advance; digits s (acc * 10 + (b.toNat - 48)) (count + 1) else return (acc, count)
-  | none => return (acc, count)
+def isWs (b : UInt8) : Bool := b == 32 || b == 9 || b == 10 || b == 13
 
-def number (s : Src) : P JsonNumber := do
-  let neg ← do
-    if (← peek s) == some 45 then advance; pure true else pure false
-  let (intPart, n) ← digits s 0 0
-  if n == 0 then err "expected digit"
-  let mut mant : Nat := intPart
+partial def skipWs (b : ByteArray) (i : Nat) : Nat :=
+  if i < b.size && isWs b[i]! then skipWs b (i + 1) else i
+
+def lit (b : ByteArray) (i : Nat) (word : String) : Bool := Id.run do
+  let w := word.toUTF8
+  if i + w.size > b.size then return false
+  for k in [0:w.size] do
+    if b[i + k]! != w[k]! then return false
+  return true
+
+def hexVal (c : UInt8) : Option Nat :=
+  if 48 ≤ c && c ≤ 57 then some (c.toNat - 48)
+  else if 97 ≤ c && c ≤ 102 then some (c.toNat - 87)
+  else if 65 ≤ c && c ≤ 70 then some (c.toNat - 55)
+  else none
+
+def hex4 (b : ByteArray) (i : Nat) : Option Nat := do
+  if i + 4 > b.size then none
+  let a ← hexVal b[i]!; let c ← hexVal b[i+1]!; let d ← hexVal b[i+2]!; let e ← hexVal b[i+3]!
+  return ((a * 16 + c) * 16 + d) * 16 + e
+
+def isStrPlain (c : UInt8) : Bool := c != 34 && c != 92 && c ≥ 32
+
+/-- Parse a string body starting after the opening quote. Copies runs of plain bytes at once. -/
+partial def strBody (b : ByteArray) (i : Nat) (acc : ByteArray) : R ByteArray :=
+  let j := (b.findIdx? (fun c => !isStrPlain c) i).getD b.size
+  let acc := if j > i then acc ++ b.extract i j else acc
+  if j ≥ b.size then err "unterminated string" j
+  else
+    let c := b[j]!
+    if c == 34 then .ok (acc, j + 1)
+    else if c < 32 then err "control character in string" j
+    else -- backslash
+      if j + 1 ≥ b.size then err "bad escape" j else
+      match b[j+1]! with
+      | 34 => strBody b (j + 2) (acc.push 34)
+      | 92 => strBody b (j + 2) (acc.push 92)
+      | 47 => strBody b (j + 2) (acc.push 47)
+      | 98 => strBody b (j + 2) (acc.push 8)
+      | 102 => strBody b (j + 2) (acc.push 12)
+      | 110 => strBody b (j + 2) (acc.push 10)
+      | 114 => strBody b (j + 2) (acc.push 13)
+      | 116 => strBody b (j + 2) (acc.push 9)
+      | 117 =>
+        match hex4 b (j + 2) with
+        | none => err "bad \\u escape" j
+        | some hi =>
+          if 0xD800 ≤ hi && hi < 0xDC00 then
+            if lit b (j + 6) "\\u" then
+              match hex4 b (j + 8) with
+              | some lo =>
+                if 0xDC00 ≤ lo && lo < 0xE000 then
+                  strBody b (j + 12) (pushUtf8 acc (0x10000 + (hi - 0xD800) * 1024 + (lo - 0xDC00)))
+                else err "invalid surrogate pair" j
+              | none => err "bad \\u escape" j
+            else err "lone high surrogate" j
+          else if 0xDC00 ≤ hi && hi < 0xE000 then err "lone low surrogate" j
+          else strBody b (j + 6) (pushUtf8 acc hi)
+      | _ => err "bad escape" j
+
+def str (b : ByteArray) (i : Nat) : R String :=
+  match strBody b (i + 1) ByteArray.empty with
+  | .ok (bytes, k) => match String.fromUTF8? bytes with
+    | some t => .ok (t, k)
+    | none => err "invalid UTF-8 in string" i
+  | .error e => .error e
+
+def isDigit (c : UInt8) : Bool := 48 ≤ c && c ≤ 57
+
+partial def digits (b : ByteArray) (i : Nat) (acc count : Nat) : Nat × Nat × Nat :=
+  if i < b.size && isDigit b[i]! then digits b (i + 1) (acc * 10 + (b[i]!.toNat - 48)) (count + 1)
+  else (acc, count, i)
+
+def number (b : ByteArray) (i : Nat) : Except String (JsonNumber × Nat) := do
+  let neg := i < b.size && b[i]! == 45
+  let i := if neg then i + 1 else i
+  let (intPart, n, i) := digits b i 0 0
+  if n == 0 then throw s!"json: expected digit at byte {i}"
+  let mut mant := intPart
   let mut exp : Int := 0
-  if (← peek s) == some 46 then
-    advance
-    let (frac, k) ← digits s 0 0
-    if k == 0 then err "expected digit after '.'"
-    mant := mant * (10 ^ k) + frac
+  let mut i := i
+  if i < b.size && b[i]! == 46 then
+    let (frac, k, j) := digits b (i + 1) 0 0
+    if k == 0 then throw s!"json: expected digit after '.' at byte {j}"
+    mant := intPart * 10 ^ k + frac
     exp := -(k : Int)
-  match ← peek s with
-  | some 101 | some 69 =>
-    advance
-    let eneg ← do
-      match ← peek s with
-      | some 45 => advance; pure true
-      | some 43 => advance; pure false
-      | _ => pure false
-    let (e, k) ← digits s 0 0
-    if k == 0 then err "expected exponent digits"
+    i := j
+  if i < b.size && (b[i]! == 101 || b[i]! == 69) then
+    let (eneg, i0) := if i + 1 < b.size && b[i+1]! == 45 then (true, i + 2)
+      else if i + 1 < b.size && b[i+1]! == 43 then (false, i + 2) else (false, i + 1)
+    let (e, k, j) := digits b i0 0 0
+    if k == 0 then throw s!"json: expected exponent digits at byte {j}"
     exp := exp + (if eneg then -(e : Int) else e)
-  | _ => pure ()
-  return ⟨if neg then -(mant : Int) else mant, exp⟩
+    i := j
+  return (⟨if neg then -(mant : Int) else mant, exp⟩, i)
 
 mutual
-partial def value (s : Src) (depth : Nat) : P Json := do
-  skipWs s
-  match ← peek s with
-  | none => err "unexpected end of input"
-  | some 110 => expectLit s "null"; return null
-  | some 116 => expectLit s "true"; return bool true
-  | some 102 => expectLit s "false"; return bool false
-  | some 34 => return Json.str (← parseStr s)
-  | some 91 => array s depth
-  | some 123 => object s depth
-  | some b => if b == 45 || isDigit b then return num (← number s) else err "unexpected character"
+partial def value (b : ByteArray) (i : Nat) (depth : Nat) : R Json :=
+  let i := skipWs b i
+  if i ≥ b.size then err "unexpected end of input" i else
+  match b[i]! with
+  | 110 => if lit b i "null" then .ok (.null, i + 4) else err "expected null" i
+  | 116 => if lit b i "true" then .ok (.bool true, i + 4) else err "expected true" i
+  | 102 => if lit b i "false" then .ok (.bool false, i + 5) else err "expected false" i
+  | 34 => (str b i).map fun (s, k) => (Json.str s, k)
+  | 91 => array b i depth
+  | 123 => object b i depth
+  | c => if c == 45 || isDigit c then (number b i).map fun (n, k) => (Json.num n, k)
+         else err "unexpected character" i
 
-partial def array (s : Src) (depth : Nat) : P Json := do
-  if depth ≥ maxDepth then err "nesting too deep"
-  advance
-  skipWs s
-  if (← peek s) == some 93 then advance; return arr #[]
-  let mut xs : Array Json := #[]
-  repeat
-    xs := xs.push (← value s (depth + 1))
-    skipWs s
-    match ← peek s with
-    | some 44 => advance
-    | some 93 => advance; break
-    | _ => err "expected ',' or ']'"
-  return arr xs
+partial def arrayRest (b : ByteArray) (i : Nat) (depth : Nat) (xs : Array Json) : Except String (Json × Nat) := do
+  let (v, i) ← value b i (depth + 1)
+  let xs := xs.push v
+  let i := skipWs b i
+  if i < b.size && b[i]! == 44 then arrayRest b (i + 1) depth xs
+  else if i < b.size && b[i]! == 93 then .ok (.arr xs, i + 1)
+  else err "expected ',' or ']'" i
 
-partial def object (s : Src) (depth : Nat) : P Json := do
-  if depth ≥ maxDepth then err "nesting too deep"
-  advance
-  skipWs s
-  if (← peek s) == some 125 then advance; return obj #[]
-  let mut kvs : Array (String × Json) := #[]
-  repeat
-    skipWs s
-    unless (← peek s) == some 34 do err "expected string key"
-    let k ← parseStr s
-    skipWs s
-    unless (← peek s) == some 58 do err "expected ':'"
-    advance
-    kvs := kvs.push (k, ← value s (depth + 1))
-    skipWs s
-    match ← peek s with
-    | some 44 => advance
-    | some 125 => advance; break
-    | _ => err "expected ',' or '}'"
-  return obj kvs
+partial def array (b : ByteArray) (i : Nat) (depth : Nat) : R Json :=
+  if depth ≥ maxDepth then err "nesting too deep" i else
+  let i := skipWs b (i + 1)
+  if i < b.size && b[i]! == 93 then .ok (.arr #[], i + 1) else arrayRest b i depth #[]
+
+partial def objectRest (b : ByteArray) (i : Nat) (depth : Nat) (kvs : Array (String × Json)) : Except String (Json × Nat) := do
+  let i := skipWs b i
+  unless i < b.size && b[i]! == 34 do throw s!"json: expected string key at byte {i}"
+  let (k, i) ← str b i
+  let i := skipWs b i
+  unless i < b.size && b[i]! == 58 do throw s!"json: expected ':' at byte {i}"
+  let (v, i) ← value b (i + 1) (depth + 1)
+  let kvs := kvs.push (k, v)
+  let i := skipWs b i
+  if i < b.size && b[i]! == 44 then objectRest b (i + 1) depth kvs
+  else if i < b.size && b[i]! == 125 then .ok (.obj kvs, i + 1)
+  else err "expected ',' or '}'" i
+
+partial def object (b : ByteArray) (i : Nat) (depth : Nat) : R Json :=
+  if depth ≥ maxDepth then err "nesting too deep" i else
+  let i := skipWs b (i + 1)
+  if i < b.size && b[i]! == 125 then .ok (.obj #[], i + 1) else objectRest b i depth #[]
 end
+
+end Parse
 
 /-- Parse a complete JSON document from UTF-8 bytes. Trailing non-whitespace is an error. -/
 def parseBytes (bytes : ByteArray) : Except String Json := do
-  let src : Src := ⟨bytes⟩
-  let (v, pos) ← (do let v ← value src 0; skipWs src; pure v).run 0
-  if pos < bytes.size then throw s!"json: trailing data at byte {pos}" else pure v
+  let (v, i) ← Parse.value bytes 0 0
+  let i := Parse.skipWs bytes i
+  if i < bytes.size then throw s!"json: trailing data at byte {i}" else pure v
 
 /-- Parse a complete JSON document. -/
 def parse (s : String) : Except String Json := parseBytes s.toUTF8

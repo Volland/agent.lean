@@ -20,6 +20,8 @@ def traceFormat : String := "agent.lean/trace"
 def snapshotFormat : String := "agent.lean/snapshot"
 def formatVersion : Nat := 1
 
+-- @tg: implements:: [[adr:0010]]
+-- @tg: implements:: [[openspec:trace-replay#Deterministic replay]]
 /-- Step through events, collecting effects. -/
 def stepAll (env : Env) (r : Run) : List Event → Run × Array Effect
   | [] => (r, #[])
@@ -33,6 +35,7 @@ theorem stepAll_fst (env : Env) (r : Run) (es : List Event) : (stepAll env r es)
   | nil => rfl
   | cons e es ih => simp [stepAll, final, ih]
 
+-- @tg: implements:: [[openspec:trace-replay#Snapshot and resume]]
 /-- **Resume equals replay**: stepping `a` then `b` from the state after `a` gives the same final
 state and the same effects, in the same order, as stepping `a ++ b` at once. -/
 theorem stepAll_append (env : Env) (r : Run) (a b : List Event) :
@@ -82,6 +85,7 @@ def resultTool? (env : Env) (r : Run) : Event → Option ToolDef
     | none => none
   | _ => none
 
+-- @tg: implements:: [[openspec:trace-replay#Sensitive trace marking]]
 /-- Whether an event carries the output of a sensitive tool. -/
 def isSensitiveEvent (env : Env) (r : Run) (e : Event) : Bool :=
   ((resultTool? env r e).map (·.sensitive)).getD false
@@ -94,6 +98,7 @@ def traceJson (cfg : RunConfig) (entries : Array Entry) : Json :=
   Json.mkObj [("format", some (.str traceFormat)), ("version", some (.nat formatVersion)),
     ("config", some (toJson cfg)), ("events", some (.arr (entries.map Entry.toJson)))]
 
+-- @tg: implements:: [[openspec:trace-replay#Audit export]]
 /-- The trace for audit: payloads of sensitive tool results are replaced by their SHA-256. -/
 def auditJson (cfg : RunConfig) (entries : Array Entry) : Json :=
   let ev (e : Entry) : Json :=
@@ -106,6 +111,7 @@ def auditJson (cfg : RunConfig) (entries : Array Entry) : Json :=
   Json.mkObj [("format", some (.str (traceFormat ++ "+audit"))), ("version", some (.nat formatVersion)),
     ("config", some (toJson cfg)), ("events", some (.arr (entries.map ev)))]
 
+-- @tg: implements:: [[openspec:trace-replay#Versioned format]]
 def checkFormat (j : Json) (fmt : String) : Except String Unit := do
   let f : String ← j.field "format"
   unless f == fmt do throw s!"expected format '{fmt}', got '{f}'"
@@ -118,6 +124,7 @@ def parseTrace (j : Json) : Except String (RunConfig × Array Entry) := do
   let evs : Array Json ← j.field "events"
   return (cfg, ← evs.mapM Entry.fromJson?)
 
+-- @tg: implements:: [[openspec:trace-replay#Deterministic replay]]
 /-- Replay a whole trace from a fresh run. -/
 def replay (env : Env) (j : Json) : Except String (Run × Array Effect) := do
   let (cfg, entries) ← parseTrace j

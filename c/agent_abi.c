@@ -1,7 +1,8 @@
 /* agent.lean C ABI shim over the Lean exports in AgentLean/Abi.lean.
  * @tg: implements:: [[openspec:host-abi#Pull-based driving]]
  * @tg: implements:: [[openspec:host-abi#Handle thread confinement]]
- * @tg: implements:: [[openspec:host-abi#JSON payloads]] */
+ * @tg: implements:: [[openspec:host-abi#JSON payloads]]
+ * @tg: implements:: [[adr:0007]] */
 #include "agent.h"
 #include <lean/lean.h>
 #include <pthread.h>
@@ -14,8 +15,9 @@ extern void agent_app_initialize(void);
 extern void lean_initialize_runtime_module(void);
 extern void lean_initialize_thread(void);
 
-extern lean_object *agentlean_new(lean_object *config);
-extern lean_object *agentlean_restore(lean_object *snapshot);
+extern lean_object *agentlean_env(lean_object *unit);
+extern lean_object *agentlean_new_in(lean_object *env, lean_object *config);
+extern lean_object *agentlean_restore_in(lean_object *env, lean_object *snapshot);
 extern lean_object *agentlean_feed(lean_object *h, lean_object *event);
 extern lean_object *agentlean_next(lean_object *h);
 extern lean_object *agentlean_snapshot(lean_object *h);
@@ -31,11 +33,22 @@ struct agent {
 };
 
 static pthread_once_t g_once = PTHREAD_ONCE_INIT;
+static lean_object *g_env = NULL; /* registered agents, persistent after init */
 static _Thread_local int t_ready = 0;
 
+/* @tg: implements:: [[adr:0017]] */
 static void init_once(void) {
   lean_initialize_runtime_module();
   agent_app_initialize();
+  /* Every handle shares the registered agents. Mark them persistent (no reference counting) so
+   * handles driven concurrently on different threads never race on their counts. */
+  lean_object *r = agentlean_env(lean_box(0));
+  if (lean_io_result_is_ok(r)) {
+    g_env = lean_io_result_get_value(r);
+    lean_inc(g_env);
+    lean_mark_persistent(g_env);
+  }
+  lean_dec(r);
   lean_io_mark_end_initialization();
   t_ready = 1;
 }
@@ -68,15 +81,7 @@ static agent_buf_t take_string(lean_object *s) {
   return b;
 }
 
-static agent_t *from_except_io(lean_object *io, agent_buf_t *err) {
-  if (!lean_io_result_is_ok(io)) {
-    lean_dec(io);
-    if (err) { *err = (agent_buf_t){(uint8_t *)strdup("initialization failed"), 21}; }
-    return NULL;
-  }
-  lean_object *ex = lean_io_result_get_value(io); /* Except String Handle */
-  lean_inc(ex);
-  lean_dec(io);
+static agent_t *from_except(lean_object *ex, agent_buf_t *err) { /* Except String Handle, owned */
   if (lean_obj_tag(ex) == 0) { /* Except.error */
     lean_object *msg = lean_ctor_get(ex, 0);
     lean_inc(msg);
@@ -94,14 +99,22 @@ static agent_t *from_except_io(lean_object *io, agent_buf_t *err) {
   return a;
 }
 
+static int no_env(agent_buf_t *err) {
+  if (g_env) return 0;
+  if (err) *err = (agent_buf_t){(uint8_t *)strdup("initialization failed"), 21};
+  return 1;
+}
+
 agent_t *agent_new(const uint8_t *config, size_t len, agent_buf_t *err) {
   enter();
-  return from_except_io(agentlean_new(bytes(config, len)), err);
+  if (no_env(err)) return NULL;
+  return from_except(agentlean_new_in(g_env, bytes(config, len)), err);
 }
 
 agent_t *agent_restore(const uint8_t *snapshot, size_t len, agent_buf_t *err) {
   enter();
-  return from_except_io(agentlean_restore(bytes(snapshot, len)), err);
+  if (no_env(err)) return NULL;
+  return from_except(agentlean_restore_in(g_env, bytes(snapshot, len)), err);
 }
 
 int agent_feed(agent_t *a, const uint8_t *event, size_t len) {

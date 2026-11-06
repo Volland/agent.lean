@@ -55,6 +55,8 @@ def okCode : UInt32 := 0
 def invalidCode : UInt32 := 1
 def rejectedCode : UInt32 := 2
 
+-- @tg: implements:: [[openspec:trace-replay#Append-only trace]]
+-- @tg: implements:: [[openspec:host-abi#JSON payloads]]
 /-- Feed one event. Invalid or unexpected events leave the handle unchanged (except `error`). -/
 def feed (h : Handle) (bytes : ByteArray) : Handle × UInt32 :=
   match parseJson bytes >>= Event.fromJson? with
@@ -76,6 +78,7 @@ def next (h : Handle) : Option String × Handle :=
 
 def snapshot (h : Handle) : String := (snapshotJson h.run h.trace.size).render
 
+-- @tg: implements:: [[openspec:trace-replay#Snapshot and resume]]
 /-- Restore from a snapshot plus the trace up to it (or an empty trace when the host keeps it). -/
 def restore (env : Env) (snap : ByteArray) : Except String Handle := do
   let (run, _) ← parseSnapshot (← parseJson snap)
@@ -87,6 +90,20 @@ def auditText (h : Handle) : String := (auditJson h.run.config h.trace).render
 end Handle
 
 /-! ## Exports used by the C shim -/
+
+-- @tg: implements:: [[adr:0017]]
+/-- The registered agents. The C shim reads this once, right after initialization, marks it
+persistent (never reference-counted) and passes it to `agentlean_new_in`/`agentlean_restore_in`,
+so handles on different threads share no mutable runtime object: neither the registry reference
+nor reference counts. -/
+@[export agentlean_env]
+def abiEnv (u : Unit) : IO Env := do let _ := u; registry.get
+
+@[export agentlean_new_in]
+def abiNewIn (env : Env) (config : ByteArray) : Except String Handle := Handle.create env config
+
+@[export agentlean_restore_in]
+def abiRestoreIn (env : Env) (snap : ByteArray) : Except String Handle := Handle.restore env snap
 
 @[export agentlean_new]
 def abiNew (config : ByteArray) : IO (Except String Handle) := do

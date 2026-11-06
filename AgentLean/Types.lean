@@ -196,6 +196,8 @@ inductive UiEvent where
   | toolEnd (id : String) (name : String) (ok : Bool)
   deriving Inhabited, Repr, BEq
 
+-- @tg: implements:: [[adr:0011]]
+-- @tg: implements:: [[openspec:host-abi#Credentials by reference]]
 inductive Effect where
   /-- POST `body` to `url`. `credential` names the secret the host injects as `auth` header
   scheme (`bearer` or `x-api-key`); the core never sees the secret. -/

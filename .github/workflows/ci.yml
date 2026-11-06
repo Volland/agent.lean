@@ -1,0 +1,163 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  BUNDLE_ARGS: >-
+    --root Examples --out bundle/out --extra c/agent_abi.c --extra-include c/agent.h
+    --extra-include c/tests/golden.h --example c/tests/conformance.c --example c/tests/threads.c
+    --example c/tests/threads_many.c
+    --example c/examples/ref_agent.c --example c/bench/bench.c
+
+jobs:
+  lean:
+    name: Lean build, proofs, scenarios, bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - uses: actions/cache@v4
+        with:
+          path: |
+            .lake
+            spike/.lake
+          key: lake-${{ runner.os }}-${{ hashFiles('lean-toolchain', 'lakefile.lean', 'scripts/bundle.py') }}
+      - run: lake build
+      - name: Scenario tests
+        run: lake test
+      - name: No sorry, standard axioms only
+        run: scripts/check_proofs.sh
+      - name: Golden traces are up to date
+        run: lake build golden && .lake/build/bin/golden && git diff --exit-code traces/
+      - name: Runtime import allowlist
+        run: scripts/test_import_allowlist.sh
+      - name: Source bundle
+        run: python3 scripts/bundle.py $BUNDLE_ARGS
+      - name: Build the bundle without Lean (host)
+        run: |
+          cmake -S bundle/out -B build/host -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/host -j 4
+          build/host/conformance traces/*.golden
+          build/host/threads_many traces/*.golden
+          scripts/test_budgets.sh build/host linux-x86_64-ci
+      - name: Lean driver against a scripted endpoint
+        run: lake build driver_demo && scripts/test_driver.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bundle
+          path: bundle/out
+
+  linux:
+    name: Linux ${{ matrix.platform }}
+    needs: lean
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: linux/amd64, runner: ubuntu-latest, flags: "--allow-missing" }
+          - { platform: linux/arm64, runner: ubuntu-24.04-arm, flags: "--allow-missing" }
+          - { platform: linux/arm/v7, runner: ubuntu-latest, flags: "--no-bench" }
+          - { platform: linux/riscv64, runner: ubuntu-latest, flags: "--no-bench" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: bundle, path: bundle/out }
+      - uses: docker/setup-qemu-action@v3
+      - run: scripts/build_linux.sh bundle/out ${{ matrix.platform }} ${{ matrix.flags }}
+
+  apple:
+    name: macOS, iOS, Mac Catalyst
+    needs: lean
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: bundle, path: bundle/out }
+      - name: macOS host
+        run: |
+          cmake -S bundle/out -B build/host -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/host -j 4
+          build/host/conformance traces/*.golden
+          build/host/threads traces/tools-parallel-sensitive.golden traces/agent-as-tool.golden
+          python3 scripts/check_budgets.py --build build/host --target darwin-arm64-ci --allow-missing
+      - name: iOS arm64 device
+        run: |
+          cmake -S bundle/out -B build/ios -DCMAKE_SYSTEM_NAME=iOS -DCMAKE_OSX_ARCHITECTURES=arm64 \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=15.0 -DCMAKE_BUILD_TYPE=Release
+          cmake --build build/ios -j 4
+      - name: Mac Catalyst (iOS SDK) conformance
+        run: |
+          F="-target arm64-apple-ios16.0-macabi"
+          cmake -S bundle/out -B build/catalyst -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_FLAGS="$F" -DCMAKE_CXX_FLAGS="$F" -DCMAKE_EXE_LINKER_FLAGS="$F"
+          cmake --build build/catalyst -j 4
+          build/catalyst/conformance traces/*.golden
+
+  android:
+    name: Android (emulator)
+    needs: lean
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: bundle, path: bundle/out }
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules && sudo udevadm trigger --name-match=kvm
+      - name: NDK builds
+        run: |
+          for abi in arm64-v8a x86_64; do
+            cmake -S bundle/out -B build/android-$abi -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK_LATEST_HOME/build/cmake/android.toolchain.cmake \
+              -DANDROID_ABI=$abi -DANDROID_PLATFORM=android-24
+            cmake --build build/android-$abi -j 4
+          done
+      - uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          target: google_apis
+          script: scripts/run_android_conformance.sh build/android-x86_64
+
+  kotlin:
+    name: Kotlin/JVM binding and Android AAR
+    needs: lean
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: bundle, path: bundle/out }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - name: Install kotlinc
+        run: |
+          curl -sSfL -o /tmp/kotlinc.zip https://github.com/JetBrains/kotlin/releases/download/v2.1.21/kotlin-compiler-2.1.21.zip
+          unzip -q /tmp/kotlinc.zip -d /opt
+          echo "/opt/kotlinc/bin" >> "$GITHUB_PATH"
+      - name: Desktop JVM conformance (golden traces through JNI)
+        run: AGENTLEAN_FROM_SOURCE=1 bindings/kotlin/run_tests.sh
+      - name: Android AAR
+        run: ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME scripts/build_android.sh
+
+  docs:
+    name: Specs and typed docs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 22 }
+      - run: npx -y @fission-ai/openspec@1.9.0 validate --all --strict
+      - run: npx -y @typedgraph/cli@0.22.0 check
+      - run: npx -y @typedgraph/cli@0.22.0 ontology check

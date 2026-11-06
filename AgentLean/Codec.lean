@@ -49,6 +49,7 @@ def message : Message → Json
          ("function", some (Json.mkObj [("name", s c.name), ("arguments", s c.args)]))])))]
   | .tool i _ c => Json.mkObj [("role", s "tool"), ("tool_call_id", s i), ("content", s c)]
 
+-- @tg: implements:: [[openspec:llm-codecs#OpenAI-compatible codec]]
 def encode (cfg : RunConfig) (msgs : Array Message) (ts : Array ToolDef) : Request :=
   let stream := cfg.stream'
   let body := Json.mkObj [
@@ -68,6 +69,8 @@ def argsText (j : Option Json) : String :=
   | some v => v.render
   | none => "{}"
 
+-- @tg: implements:: [[openspec:llm-codecs#OpenAI-compatible codec]]
+-- @tg: implements:: [[openspec:llm-codecs#Malformed model output]]
 def decode (reqId : String) (body : String) : Except String Reply := do
   let j ← Json.parse body
   if let some e := j.getOpt? "error" then
@@ -143,6 +146,7 @@ def encode (cfg : RunConfig) (msgs : Array Message) (ts : Array ToolDef) : Reque
     headers := #[("content-type", "application/json"), ("anthropic-version", "2023-06-01")],
     body := body.render }
 
+-- @tg: implements:: [[openspec:llm-codecs#Anthropic Messages codec]]
 def decode (body : String) : Except String Reply := do
   let j ← Json.parse body
   if (j.get? "type").bind Json.getStr? == some "error" then
@@ -174,6 +178,9 @@ def encode (cfg : RunConfig) (msgs : Array Message) (ts : Array ToolDef) : Reque
   | .openai => OpenAI.encode cfg msgs ts
   | .anthropic => Anthropic.encode cfg msgs ts
 
+-- @tg: implements:: [[adr:0003]]
+-- @tg: implements:: [[adr:0004]]
+-- @tg: implements:: [[openspec:llm-codecs#Transport neutrality]]
 def decode (p : Provider) (reqId body : String) : Except String Reply :=
   match p with
   | .openai => OpenAI.decode reqId body
@@ -281,6 +288,7 @@ def anthropic (acc : StreamAcc) (ev : Sse.Event) : StreamAcc × Array String := 
     return (acc.fail s!"provider error: {((e.get? "message").bind Json.getStr?).getD e.render}", #[])
   | _ => return (acc, #[])
 
+-- @tg: implements:: [[openspec:llm-codecs#Streaming decoding]]
 /-- Apply one SSE event; returns the text deltas it carried. -/
 def apply (p : Provider) (acc : StreamAcc) (ev : Sse.Event) : StreamAcc × Array String :=
   match p with

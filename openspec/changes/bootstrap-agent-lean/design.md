@@ -64,8 +64,11 @@ State is the fold of `step` over the trace; snapshots are cached folds; theorem 
 
 Not applicable: first change in a new repository. Rollback is reverting the change.
 
-## Open Questions
+## Resolved during implementation
 
-- The numbers for the size, step-overhead, cold-start and memory budgets: set from the spike's measurements.
-- Whether the official Lean release links GMP statically, dynamically or not at all on each platform: answered by the spike's audit.
-- Which `Std` modules make the allowlist beyond `Std.Data.HashMap`: decided module by module as the core needs them.
+- **Budgets**: set from measurements and recorded in `bench/budgets.json` per target (reference agent 0.97 MB stripped on macOS arm64, 1.3–1.7 MB fully static on Linux; step ≈ 40 µs; codec ≈ 80 MB/s; ≈ 7 KB per idle agent). CI fails beyond 5% size or 2× performance.
+- **GMP**: the release runtime links GMP statically; the bundle builds without GMP everywhere, and also without libuv, OpenSSL and mimalloc (ADR 0013).
+- **Std allowlist**: empty so far; the runtime needs only `Init`.
+- **Module system**: Lean 4.35's `meta import` keeps compile-time modules out of runtime initializers, so `AgentLean.Meta` needs no stubs beyond what the bundle generates.
+- **Concurrency**: shared agents are persistent (ADR 0017).
+- **Open**: comparison benchmarks against agent.cpp and agent.rs (task 11.6); a formal JSON round-trip proof.

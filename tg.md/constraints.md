@@ -84,3 +84,27 @@ Model responses and tool output can be malformed or adversarial (prompt injectio
 - constrains:: [[decisions#Tools declared at compile time]] {strength: must, source: "LLM threat model"}
 - constrains:: [[decisions#Policies compiled to monitors]] {strength: must, source: "LLM threat model"}
 - constrains:: [[decisions#Credentials by reference]] {strength: must, source: "LLM threat model"}
+
+## The Lean runtime core calls libuv
+
+Lean 4.35's `io.cpp` uses libuv for file metadata, temporary files and error codes, and `init_module.cpp` initializes libuv, so the runtime does not build without it or a stand-in. Source: Lean 4.35 runtime sources.
+
+- constrains:: [[decisions#Runtime without libuv]] {strength: must, source: "Lean 4.35 runtime io.cpp"}
+
+## iOS has no system call
+
+The iOS SDK marks `system()` unavailable, and the Lean runtime's debug prompt calls it. Source: iOS SDK.
+
+- constrains:: [[decisions#Runtime without libuv]] {strength: must, source: "iOS SDK"}
+
+## Lean's bundled linker cannot read current macOS SDK stubs
+
+The `lld` shipped with the Lean 4.35 toolchain rejects the `.tbd` stubs of the current macOS SDK, so linking system libraries such as libcurl through Lake fails. Source: Lean 4.35 toolchain.
+
+- constrains:: [[decisions#Driver loads libcurl at run time]] {strength: must, source: "Lean 4.35 toolchain lld"}
+
+## Lean reference counts are not atomic by default
+
+Objects not marked multi-threaded or persistent have plain reference counts, and `IO.Ref` reads are not safe from several threads, so objects shared between handles must be persistent. Source: `lean.h`.
+
+- constrains:: [[decisions#Registered agents are persistent]] {strength: must, source: "lean.h"}

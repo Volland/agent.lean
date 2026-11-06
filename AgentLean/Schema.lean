@@ -65,6 +65,7 @@ def decodeField {σ β} [FromJson β] [OptionalField β] (_proj : σ → β) (j 
       | .error e => throw s!"{k}: {e}"
     else throw s!"missing field '{k}'"
 
+-- @tg: implements:: [[openspec:tools#Schema derived from tool type]]
 /-- An object schema from (name, schema, optional) triples; closed to unknown properties. -/
 def objectSchema (fields : Array (String × Json × Bool)) : Json :=
   Json.mkObj [

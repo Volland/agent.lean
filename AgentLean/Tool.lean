@@ -15,6 +15,8 @@ idempotency flag, data labels and optional contracts (ADR 0006). The core works 
 
 namespace AgentLean
 
+-- @tg: implements:: [[adr:0006]]
+-- @tg: implements:: [[openspec:tools#Tool executors]]
 /-- Where a tool runs. -/
 inductive Executor where
   /-- Inside the core, during `step`: no host round trip. -/
@@ -27,6 +29,9 @@ inductive Executor where
   | agent (name : String)
   deriving BEq, Repr, Inhabited
 
+-- @tg: implements:: [[openspec:tools#Tool contracts]]
+-- @tg: implements:: [[openspec:tools#Idempotency declaration]]
+-- @tg: implements:: [[openspec:tools#Data labels]]
 /-- A typed tool. `idempotent` has no default: every tool author decides whether a call that was
 in flight during a crash may be re-issued. -/
 structure Tool (α β : Type) where
@@ -120,6 +125,8 @@ def decodeArgs (j : Json) : Except ToolFailure α :=
   | .ok a => pure a
   | .error e => throw (.invalidArguments e)
 
+-- @tg: implements:: [[openspec:tools#Typed tool arguments]]
+-- @tg: implements:: [[openspec:tools#Tool contracts]]
 /-- Erase a typed tool. -/
 def erase (t : Tool α β) : ToolDef where
   name := t.name

@@ -76,6 +76,7 @@ def search (bpt limit : Nat) (sys : String) (older last : List Message) : Option
     if fits k1 nTurns k2 then return some (k1, nTurns, k2)
   return none
 
+-- @tg: implements:: [[openspec:agent-core#Context window policy]]
 /-- Build the messages of a request within `limit` estimated tokens, or `none` if even the pinned
 content does not fit. -/
 def fit (bpt limit : Nat) (sys : String) (hist : List Message) : Option (List Message) :=

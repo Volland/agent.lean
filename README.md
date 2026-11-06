@@ -11,13 +11,14 @@
 
 <p align="center">
   <a href="LICENSE"><img alt="License: Apache-2.0" src="https://img.shields.io/badge/license-Apache--2.0-blue.svg"></a>
-  <img alt="Status: design" src="https://img.shields.io/badge/status-design%20phase-orange.svg">
+  <a href="https://github.com/Volland/agent.lean/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Volland/agent.lean/actions/workflows/ci.yml/badge.svg"></a>
+  <img alt="Status: v0.1" src="https://img.shields.io/badge/status-v0.1%20preview-orange.svg">
   <img alt="Lean 4" src="https://img.shields.io/badge/Lean-4-6366f1.svg">
 </p>
 
 ---
 
-> **Status: design phase.** The architecture, decisions and specs are written down and reviewed; no library code exists yet. The first milestone is a one-week **feasibility spike** that cross-compiles a hello-agent to iOS, Android and aarch64 Linux and measures size and start-up. See [the bootstrap change](openspec/changes/bootstrap-agent-lean/).
+> **Status: v0.1 preview.** The core, codecs, policies, trace, C ABI, Lean driver, bundle, Swift and Kotlin bindings and the llama.cpp adapter are implemented; the guarantees below are proved in Lean or checked by tests. APIs may still change.
 
 ## Why
 
@@ -59,48 +60,100 @@ agent.cpp and agent.rs showed that an agent framework can be a small native libr
 | API keys never reach traces | Requests carry a credential *reference*; a `Secret` cannot be serialized |
 | Codecs are correct | Round-trip and chunk-split theorems for the JSON and SSE parsers |
 
-## A taste (API sketch, subject to change)
+## Quick start
+
+```bash
+lake build                 # the library (Lean 4.35, pinned in lean-toolchain)
+lake test                  # 43 scenario tests, one per spec scenario
+scripts/check_proofs.sh    # no sorry; main theorems use only Lean's standard axioms
+
+# run the example assistant through the Lean driver against any OpenAI-compatible endpoint
+lake build driver_demo
+AGENT_CREDENTIAL_OPENAI=$OPENAI_API_KEY .lake/build/bin/driver_demo \
+  --endpoint https://api.openai.com/v1/chat/completions --model gpt-4.1-mini "What is 17 plus 25?"
+# or a local model: --endpoint http://127.0.0.1:11434/v1/chat/completions --model <ollama model>
+
+# the portable source bundle: plain C/C++ + CMake, no Lean needed to build it
+python3 scripts/bundle.py --root Examples --out bundle/out --extra c/agent_abi.c --extra-include c/agent.h
+```
+
+Write an agent:
 
 ```lean
 import AgentLean
-open AgentLean
+meta import AgentLean.Meta     -- deriving handlers and `policy`, compile time only
+open AgentLean AgentLean.Formula
 
-structure Transfer where
+structure TransferArgs where
   to     : String
   amount : UInt32
-deriving ToolSchema
+  memo   : Option String
+  deriving ToJson, FromJson, ToolSchema   -- JSON Schema derived from the type
 
-def transfer : Tool Transfer Receipt where
+def transfer : Tool TransferArgs Receipt where
   name       := "transfer"
-  executor   := .host "bank.transfer"   -- implemented by the iOS/Android app
-  idempotent := false                   -- required: never auto-retried after a crash
-  sensitive  := true
-  pre        := fun t => t.amount ≤ 100
+  description := "Send money to a contact"
+  executor   := .host "bank.transfer"     -- implemented by the iOS/Android app
+  idempotent := false                     -- required: never re-issued after a crash
+  sensitive  := true                      -- trace flagged for encryption, hashed on audit export
+  pre x      := x.amount > 0
 
-policy confirmBeforePay :=
-  call "transfer" → previously (call "confirm_user") since userTurn
+policy payLimit := guard "transfer" "amount ≤ 100" (argNat "amount" (· ≤ 100))
+  because "transfers above 100 need a human"
+policy confirmBeforePay := requiresBefore "transfer" "confirm_user"
+policy noDelete halt := ¬ₚ call! "delete_all"
 
-def payAgent : Agent where
-  system   := "You help the user pay their friends."
-  tools    := [transfer, confirmUser]
-  policies := [confirmBeforePay]
-  budget   := { steps := 20, toolCalls := 8, tokens := 32_000 }
+def assistant : Agent where
+  name     := "assistant"
+  system   := "You are a careful assistant."
+  tools    := #[transfer.erase, confirmUser.erase, Agent.asTool "researcher" "research" "Delegate research"]
+  policies := #[payLimit, confirmBeforePay, noDelete]
+  budget   := { steps := 64, toolCalls := 10, tokens := 100000 }
+
+initialize registerAgent assistant
 ```
 
-Driving it from C (any host works the same way):
+See [Examples/Agents.lean](Examples/Agents.lean) for the full example.
+
+Drive it from C (Swift, Kotlin and the Lean driver wrap the same five calls):
 
 ```c
-agent_t *a = agent_new(config, config_len);
-agent_feed(a, user_msg, user_msg_len);
-agent_buf_t eff;
-while (agent_next_effect(a, &eff)) {
-    /* llm  → POST bytes through your transport, feed the response back
-       tool → run the host tool, feed the result back
-       emit → update the UI
-       complete → done */
+agent_t *a = agent_new(cfg, cfg_len, NULL);   /* {"agent":"assistant","model":...,"endpoint":...} */
+agent_feed(a, user_event, len);
+agent_buf_t e;
+while (agent_next_effect(a, &e)) {
+    /* llm_request → POST e.body to e.url, adding the secret named by e.credential; feed llm_response
+       tool_call   → run the host tool; feed tool_result
+       ui          → update the UI
+       complete    → done */
+    agent_buf_free(e);
 }
 agent_free(a);
 ```
+
+## Proved and tested
+
+| Guarantee | Where |
+|---|---|
+| Policy monitors decide exactly what the formula says over the whole trace | `monitor_sound` ([Policy.lean](AgentLean/Policy.lean)) |
+| Every run ends within its step budget; a finished run does nothing | `final_done`, `done_sticky` ([Run.lean](AgentLean/Run.lean)) |
+| A child agent never gets more than its parent has left | `allocate_le` |
+| Resuming from a snapshot gives the same states and effects as replaying everything | `stepAll_append` ([Trace.lean](AgentLean/Trace.lean)) |
+| SSE decoding is independent of how the stream is split | `Sse.feed_chunks` |
+| Requests fit the context estimate; system prompt and last user turn are never dropped | `fit_fits`, `fit_head`, `fit_keeps_last_turn` |
+| Tool arguments decode into the tool's type or are rejected; schema acceptance = decoding | scenario tests |
+| Same behaviour byte for byte on every target and binding | golden traces in [traces/](traces/) |
+
+## Measured (v0.1, Apple M-series / Docker)
+
+| Target | Reference agent, stripped | Notes |
+|---|---|---|
+| macOS arm64 | 0.97 MB | step ≈ 40 µs, codec ≈ 80 MB/s, cold start < 1 ms, ≈ 7 KB per idle agent |
+| Linux aarch64 (static musl) | 1.7 MB | includes musl and libc++; step ≈ 55 µs |
+| Linux x86_64 / riscv64 (static musl, emulated) | 1.66 / 1.31 MB | conformance + thread tests pass under QEMU |
+| iOS arm64, Android arm64-v8a / x86_64 | builds | iOS code runs as Mac Catalyst; Android runs in CI on the emulator |
+
+Budgets live in [bench/budgets.json](bench/budgets.json) and [bundle/runtime-surface/](bundle/runtime-surface/); CI fails on regressions.
 
 ## Targets
 
@@ -113,33 +166,29 @@ agent_free(a);
 
 Bindings are hand-written over each platform's native FFI (Swift C interop, JNI, Kotlin/Native cinterop) and pass the same golden-trace conformance suite as the C ABI.
 
-## Small and fast, measured
+## Layout
 
-The runtime library imports only Lean's `Init` and an allowlist of `Std` modules (never `import Lean`), ships its own JSON and SSE codecs, uses no threads, and records every Lean runtime symbol it links. CI will fail on regressions in:
-
-- binary size of a stripped static reference agent
-- step overhead, codec throughput, cold start and memory per agent
-
-The budget numbers will be set from the feasibility spike's measurements rather than guessed.
+| Path | What |
+|---|---|
+| `AgentLean/` | the runtime library (imports only `Init`) |
+| `AgentLean/Meta/` | compile-time deriving handlers and the `policy` command |
+| `AgentLean/Driver.lean`, `c/agent_curl.c` | the Lean-native driver (libcurl, loaded at run time) |
+| `c/agent.h`, `c/agent_abi.c` | the C ABI |
+| `c/llama/` | in-process llama.cpp adapter (grammar-constrained tool calls) |
+| `bindings/swift`, `bindings/kotlin` | Swift (XCFramework/SwiftPM) and Kotlin (JNI/AAR) bindings |
+| `scripts/bundle.py`, `bundle/` | the portable source bundle generator and runtime shim |
+| `traces/` | golden traces every target must reproduce |
+| `Tests/` | scenario tests, golden generator, axiom report |
 
 ## Roadmap
 
-1. **Feasibility spike**: hello-agent on iOS, Android, aarch64 Linux; size and start-up floors; GMP licence audit.
-2. Skeleton, import and `sorry` guards, CI.
-3. JSON/SSE codecs with proofs.
-4. Agent core, tools, policies.
-5. LLM codecs, trace and replay.
-6. C ABI, Lean driver, local llama.cpp adapter.
-7. Source bundle, target matrix, budgets.
-8. Swift and Kotlin bindings.
-
-The full task list is in [tasks.md](openspec/changes/bootstrap-agent-lean/tasks.md).
+v0.1 (this): everything in the [bootstrap change](openspec/specs/). Next: a pure-C mini-runtime implementing the recorded runtime surface (RTOS/MCU targets), optional vendored mimalloc, MCP as an untrusted dynamic tool tier, streaming in the local adapter.
 
 ## Design documents
 
-- **Architecture decisions**: [docs/adr/](docs/adr/) (ADRs 0002–0012)
-- **Specs**: [openspec/changes/bootstrap-agent-lean/specs/](openspec/changes/bootstrap-agent-lean/specs/), one per capability: `agent-core`, `tools`, `policies`, `llm-codecs`, `trace-replay`, `host-abi`, `portable-build`
-- **Design**: [design.md](openspec/changes/bootstrap-agent-lean/design.md)
+- **Architecture decisions**: [docs/adr/](docs/adr/) (ADRs 0002–0017)
+- **Specs**: [openspec/specs/](openspec/specs/), one per capability: `agent-core`, `tools`, `policies`, `llm-codecs`, `trace-replay`, `host-abi`, `portable-build`
+- **Design**: [design.md](openspec/changes/archive/) of the archived bootstrap change
 - **Typed knowledge graph**: [tg.md/](tg.md/) holds concepts, decisions and constraints as a typed graph, checked with the `tg` CLI
 
 ## Out of scope for v1
