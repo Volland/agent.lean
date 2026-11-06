@@ -1,0 +1,16 @@
+# Lean / Lake
+.lake/
+build/
+
+# bundle and native builds
+bundle/out/
+*.o
+*.a
+*.so
+*.dylib
+*.xcframework/
+
+# local tool state
+.omc/
+.tg/
+.DS_Store

@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256" role="img" aria-labelledby="t d">
+  <title id="t">Lemma, the agent.lean mascot</title>
+  <desc id="d">A small microchip robot with a screen face, an antenna spark and a proof checkmark on its chest.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6366f1"/>
+      <stop offset="1" stop-color="#7c3aed"/>
+    </linearGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f8fafc"/>
+      <stop offset="1" stop-color="#cbd5e1"/>
+    </linearGradient>
+  </defs>
+  <circle cx="128" cy="128" r="124" fill="url(#bg)"/>
+  <!-- antenna -->
+  <path d="M128 66 V44" stroke="#0f172a" stroke-width="6" stroke-linecap="round"/>
+  <circle cx="128" cy="36" r="10" fill="#fbbf24" stroke="#0f172a" stroke-width="5"/>
+  <path d="M110 28 l-8 -6 M146 28 l8 -6 M128 16 v-6" stroke="#fde68a" stroke-width="4" stroke-linecap="round"/>
+  <!-- side pins -->
+  <g fill="#fbbf24" stroke="#0f172a" stroke-width="4">
+    <rect x="46" y="96" width="24" height="12" rx="4"/>
+    <rect x="46" y="122" width="24" height="12" rx="4"/>
+    <rect x="46" y="148" width="24" height="12" rx="4"/>
+    <rect x="186" y="96" width="24" height="12" rx="4"/>
+    <rect x="186" y="122" width="24" height="12" rx="4"/>
+    <rect x="186" y="148" width="24" height="12" rx="4"/>
+  </g>
+  <!-- feet -->
+  <g fill="#0f172a">
+    <rect x="94" y="190" width="18" height="22" rx="6"/>
+    <rect x="144" y="190" width="18" height="22" rx="6"/>
+  </g>
+  <!-- chip body -->
+  <rect x="64" y="64" width="128" height="132" rx="28" fill="url(#body)" stroke="#0f172a" stroke-width="6"/>
+  <!-- screen face -->
+  <rect x="80" y="80" width="96" height="58" rx="16" fill="#0f172a"/>
+  <rect x="98" y="98" width="14" height="20" rx="7" fill="#5eead4"/>
+  <rect x="144" y="98" width="14" height="20" rx="7" fill="#5eead4"/>
+  <circle cx="108" cy="103" r="2.5" fill="#f0fdfa"/>
+  <circle cx="154" cy="103" r="2.5" fill="#f0fdfa"/>
+  <path d="M118 126 q10 7 20 0" stroke="#5eead4" stroke-width="4" fill="none" stroke-linecap="round"/>
+  <!-- proof check badge -->
+  <circle cx="128" cy="165" r="17" fill="#22c55e" stroke="#0f172a" stroke-width="5"/>
+  <path d="M120 165 l6 6 l11 -12" stroke="#ffffff" stroke-width="5" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- cheeks -->
+  <circle cx="86" cy="160" r="6" fill="#fda4af" opacity="0.8"/>
+  <circle cx="170" cy="160" r="6" fill="#fda4af" opacity="0.8"/>
+</svg>
