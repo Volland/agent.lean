@@ -14,3 +14,11 @@ bundle/out/
 .omc/
 .tg/
 .DS_Store
+
+# spike and bundle build outputs
+spike/out-bundle/
+spike/build-*/
+spike/.lake/
+.lake-spike-*.log
+bundle/out/
+build/
