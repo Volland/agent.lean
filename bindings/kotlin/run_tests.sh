@@ -5,6 +5,7 @@
 #   bindings/kotlin/run_tests.sh            # link the prebuilt build/host/libagentlean.a if present
 #   AGENTLEAN_FROM_SOURCE=1 bindings/kotlin/run_tests.sh   # compile bundle/out instead (~1-2 min)
 #   AGENTLEAN_SERIAL=1 bindings/kotlin/run_tests.sh        # one process-wide lock (-Dagentlean.parallel=false)
+#   AGENTLEAN_LIB=path/libagentlean.a bindings/kotlin/run_tests.sh   # link a specific prebuilt library
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -24,7 +25,10 @@ JAVA="$JDK/bin/java"
 echo "JDK: $JDK"
 
 PREBUILT=""
-if [ -z "${AGENTLEAN_FROM_SOURCE:-}" ] && [ -f "$ROOT/build/host/libagentlean.a" ]; then
+if [ -n "${AGENTLEAN_LIB:-}" ]; then
+  PREBUILT="$(cd "$(dirname "$AGENTLEAN_LIB")" && pwd)/$(basename "$AGENTLEAN_LIB")"
+  echo "linking prebuilt $PREBUILT"
+elif [ -z "${AGENTLEAN_FROM_SOURCE:-}" ] && [ -f "$ROOT/build/host/libagentlean.a" ]; then
   PREBUILT="$ROOT/build/host/libagentlean.a"
   echo "linking prebuilt $PREBUILT"
 else

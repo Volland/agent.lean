@@ -150,7 +150,7 @@ agent_free(a);
 |---|---|---|
 | macOS arm64 | 0.97 MB | step ≈ 40 µs, codec ≈ 80 MB/s, cold start < 1 ms, ≈ 7 KB per idle agent |
 | Linux aarch64 (static musl) | 1.7 MB | includes musl and libc++; step ≈ 55 µs |
-| Linux x86_64 / riscv64 (static musl, emulated) | 1.66 / 1.31 MB | conformance + thread tests pass under QEMU |
+| Linux x86_64 / armv7 / riscv64 (static musl, emulated) | 1.66 / 1.41 / 1.31 MB | conformance + thread tests pass under QEMU |
 | iOS arm64, Android arm64-v8a / x86_64 | builds | iOS code runs as Mac Catalyst; Android runs in CI on the emulator |
 
 Budgets live in [bench/budgets.json](bench/budgets.json) and [bundle/runtime-surface/](bundle/runtime-surface/); CI fails on regressions.

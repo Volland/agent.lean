@@ -1,0 +1,7 @@
+// Host-library variant of the AgentLeanC module (see Package.swift). It points at the repository's
+// c/agent.h rather than copying it, so the header has one source of truth.
+module AgentLeanC {
+  header "../../../../../c/agent.h"
+  link "c++"
+  export *
+}

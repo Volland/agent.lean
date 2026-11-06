@@ -44,13 +44,18 @@ RUNTIME_CPP = [
 # toolchain bump cannot silently drop one.
 RUNTIME_PATCHES = [
     # iOS has no system(); the call only serves the interactive "attach gdb" debug prompt.
-    ("debug.cpp", "if (system(buffer.str().c_str()) == 0) {",
+    ("runtime/debug.cpp", "if (system(buffer.str().c_str()) == 0) {",
      "if (agentlean_system(buffer.str().c_str()) == 0) {"),
-    ("debug.cpp", "namespace lean {",
+    ("runtime/debug.cpp", "namespace lean {",
      "#if defined(__APPLE__)\n#include <TargetConditionals.h>\n#endif\n"
      "static int agentlean_system(const char * cmd) {\n"
      "#if defined(__APPLE__) && TARGET_OS_IPHONE\n    (void)cmd; return -1;\n#else\n    return system(cmd);\n#endif\n}\n"
      "namespace lean {"),
+    # free_sized(p, n) frees like free(p); the NDK declares it only from Android 37 (API 24 is our minimum).
+    ("include/lean/lean.h", "    free_sized(ptr, *ptr + sizeof(size_t));",
+     "    free(ptr); /* agent.lean: free_sized needs Android 37 */"),
+    ("runtime/mpz.cpp", "        free_sized(ptr, size);", "        (void)size; free(ptr);"),
+    ("runtime/object.cpp", "    free_sized(o, sz);", "    (void)sz; free(o);"),
 ]
 TOOLCHAIN_PREFIXES = ("Init", "Std", "Lean", "Lake")
 FORBIDDEN_PREFIXES = ("Lean", "Lake")
@@ -224,12 +229,6 @@ class Bundler:
             shutil.copyfile(h, rt / h.name)
         for c in RUNTIME_CPP:
             shutil.copyfile(src / "runtime" / c, rt / c)
-        for name, old, new in RUNTIME_PATCHES:
-            f = rt / name
-            text = f.read_text()
-            if old not in text:
-                fail(f"runtime patch no longer applies to {name}: {old!r}")
-            f.write_text(text.replace(old, new, 1))
         for o in (SHIM / "runtime").iterdir():
             shutil.copyfile(o, rt / o.name)
         (self.out / "util").mkdir()
@@ -240,6 +239,12 @@ class Bundler:
         shutil.copyfile(src / "include" / "lean" / "lean.h", inc / "lean.h")
         shutil.copyfile(self.prefix / "include" / "lean" / "version.h", inc / "version.h")
         shutil.copyfile(SHIM / "config.h", inc / "config.h")
+        for name, old, new in RUNTIME_PATCHES:
+            f = self.out / name
+            text = f.read_text()
+            if old not in text:
+                fail(f"runtime patch no longer applies to {name}: {old!r}")
+            f.write_text(text.replace(old, new, 1))
         (self.out / "githash.h").write_text(f'#pragma once\n#define LEAN_GITHASH "{self.commit}"\n')
         (self.out / "shim").mkdir()
         for f in ("uv.h", "uv_shim.c"):

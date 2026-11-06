@@ -131,6 +131,19 @@ jobs:
           target: google_apis
           script: scripts/run_android_conformance.sh build/android-x86_64
 
+  swift:
+    name: Swift binding (XCFramework)
+    needs: lean
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: bundle, path: bundle/out }
+      - name: XCFramework (macOS, iOS, simulator, Catalyst)
+        run: scripts/build_xcframework.sh
+      - name: swift test (golden traces through the binding, async driver, concurrency)
+        run: cd bindings/swift && swift test
+
   kotlin:
     name: Kotlin/JVM binding and Android AAR
     needs: lean

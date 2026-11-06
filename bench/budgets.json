@@ -20,6 +20,9 @@
       },
       "size_bytes": 1706632
     },
+    "linux-armv7": {
+      "size_bytes": 1406728
+    },
     "linux-riscv64": {
       "size_bytes": 1305392
     },
